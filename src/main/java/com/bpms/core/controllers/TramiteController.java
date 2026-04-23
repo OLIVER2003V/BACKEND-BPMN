@@ -1,6 +1,7 @@
 package com.bpms.core.controllers;
 
 import com.bpms.core.models.NuevoTramiteRequest;
+import com.bpms.core.models.TipoResponsable;
 import com.bpms.core.models.Tramite;
 import com.bpms.core.repositories.TramiteRepository;
 import com.bpms.core.services.FlujoService;
@@ -51,18 +52,145 @@ public class TramiteController {
 
     @Autowired
     private FlujoService flujoService;
+
+    @Autowired
+    private org.springframework.data.mongodb.core.MongoTemplate mongoTemplate;
+
+    // 👇 NUEVO: Endpoint optimizado con Aggregation y Filtro de Fechas
+    @GetMapping("/dashboard/stats")
+    public ResponseEntity<?> getDashboardStats(
+            @RequestParam(required = false) String fechaInicio,
+            @RequestParam(required = false) String fechaFin) {
+        try {
+            org.springframework.data.mongodb.core.query.Criteria criteria = new org.springframework.data.mongodb.core.query.Criteria();
+
+            // Filtro dinámico de fechas
+            if (fechaInicio != null && !fechaInicio.isBlank() && fechaFin != null && !fechaFin.isBlank()) {
+                criteria = org.springframework.data.mongodb.core.query.Criteria.where("fechaCreacion")
+                        .gte(LocalDateTime.parse(fechaInicio + "T00:00:00"))
+                        .lte(LocalDateTime.parse(fechaFin + "T23:59:59"));
+            }
+
+            org.springframework.data.mongodb.core.aggregation.MatchOperation matchStage = org.springframework.data.mongodb.core.aggregation.Aggregation
+                    .match(criteria);
+
+            // Pipeline de agrupación sumando estados
+            org.springframework.data.mongodb.core.aggregation.GroupOperation groupStage = org.springframework.data.mongodb.core.aggregation.Aggregation
+                    .group()
+                    .count().as("total")
+                    .sum(org.springframework.data.mongodb.core.aggregation.ConditionalOperators.when(
+                            org.springframework.data.mongodb.core.query.Criteria.where("estadoSemaforo").is("APROBADO"))
+                            .then(1).otherwise(0))
+                    .as("aprobados")
+                    .sum(org.springframework.data.mongodb.core.aggregation.ConditionalOperators.when(
+                            org.springframework.data.mongodb.core.query.Criteria.where("estadoSemaforo")
+                                    .is("RECHAZADO"))
+                            .then(1).otherwise(0))
+                    .as("rechazados")
+                    .sum(org.springframework.data.mongodb.core.aggregation.ConditionalOperators.when(
+                            new org.springframework.data.mongodb.core.query.Criteria().orOperator(
+                                    org.springframework.data.mongodb.core.query.Criteria.where("estadoSemaforo")
+                                            .is("EN_REVISION"),
+                                    org.springframework.data.mongodb.core.query.Criteria.where("estadoSemaforo")
+                                            .is("EN_TIEMPO"),
+                                    org.springframework.data.mongodb.core.query.Criteria.where("estadoSemaforo")
+                                            .is("EN_PROCESO")))
+                            .then(1).otherwise(0))
+                    .as("enProceso");
+
+            org.springframework.data.mongodb.core.aggregation.Aggregation aggregation = org.springframework.data.mongodb.core.aggregation.Aggregation
+                    .newAggregation(matchStage, groupStage);
+
+            org.springframework.data.mongodb.core.aggregation.AggregationResults<java.util.Map> results = mongoTemplate
+                    .aggregate(aggregation, "tramites", java.util.Map.class);
+
+            java.util.Map<String, Object> stats = results.getUniqueMappedResult();
+            if (stats == null) {
+                // Flujo A1: Sin Datos
+                stats = java.util.Map.of("total", 0, "aprobados", 0, "rechazados", 0, "enProceso", 0);
+            }
+
+            return ResponseEntity.ok(stats);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("Error al cargar estadísticas: " + e.getMessage());
+        }
+    }
+
+    // 👇 NUEVO: Pipeline para agrupar por política (Evita el findAll en memoria)
+    @GetMapping("/dashboard/por-politica")
+    public ResponseEntity<?> getStatsPorPolitica(
+            @RequestParam(required = false) String fechaInicio,
+            @RequestParam(required = false) String fechaFin) {
+        try {
+            org.springframework.data.mongodb.core.query.Criteria criteria = org.springframework.data.mongodb.core.query.Criteria
+                    .where("procesoDefinicionId").exists(true);
+
+            if (fechaInicio != null && !fechaInicio.isBlank() && fechaFin != null && !fechaFin.isBlank()) {
+                criteria.andOperator(
+                        org.springframework.data.mongodb.core.query.Criteria.where("fechaCreacion")
+                                .gte(LocalDateTime.parse(fechaInicio + "T00:00:00")),
+                        org.springframework.data.mongodb.core.query.Criteria.where("fechaCreacion")
+                                .lte(LocalDateTime.parse(fechaFin + "T23:59:59")));
+            }
+
+            org.springframework.data.mongodb.core.aggregation.MatchOperation match = org.springframework.data.mongodb.core.aggregation.Aggregation
+                    .match(criteria);
+
+            org.springframework.data.mongodb.core.aggregation.GroupOperation group = org.springframework.data.mongodb.core.aggregation.Aggregation
+                    .group("procesoDefinicionId")
+                    .count().as("total")
+                    .sum(org.springframework.data.mongodb.core.aggregation.ConditionalOperators.when(
+                            org.springframework.data.mongodb.core.query.Criteria.where("estadoSemaforo").is("APROBADO"))
+                            .then(1).otherwise(0))
+                    .as("APROBADO")
+                    .sum(org.springframework.data.mongodb.core.aggregation.ConditionalOperators.when(
+                            org.springframework.data.mongodb.core.query.Criteria.where("estadoSemaforo")
+                                    .is("RECHAZADO"))
+                            .then(1).otherwise(0))
+                    .as("RECHAZADO")
+                    .sum(org.springframework.data.mongodb.core.aggregation.ConditionalOperators.when(
+                            new org.springframework.data.mongodb.core.query.Criteria().orOperator(
+                                    org.springframework.data.mongodb.core.query.Criteria.where("estadoSemaforo")
+                                            .is("EN_REVISION"),
+                                    org.springframework.data.mongodb.core.query.Criteria.where("estadoSemaforo")
+                                            .is("EN_TIEMPO"),
+                                    org.springframework.data.mongodb.core.query.Criteria.where("estadoSemaforo")
+                                            .is("EN_PROCESO")))
+                            .then(1).otherwise(0))
+                    .as("EN_REVISION");
+
+            org.springframework.data.mongodb.core.aggregation.Aggregation agg = org.springframework.data.mongodb.core.aggregation.Aggregation
+                    .newAggregation(match, group);
+
+            java.util.List<java.util.Map> results = mongoTemplate.aggregate(agg, "tramites", java.util.Map.class)
+                    .getMappedResults();
+
+            // Transformar al formato que espera el frontend: Map<String, Map<String, Long>>
+            java.util.Map<String, java.util.Map<String, Object>> response = new java.util.HashMap<>();
+            for (java.util.Map r : results) {
+                String id = (String) r.get("_id");
+                response.put(id, r);
+            }
+
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("Error: " + e.getMessage());
+        }
+    }
+
     // 2. Método para que el funcionario guarde su resolución (Actualizar)
     @PutMapping("/{id}")
-    public ResponseEntity<?> actualizarTramite(@PathVariable String id, 
-                                               @RequestBody Tramite tramiteActualizado, 
-                                               Principal principal) { // Principal extrae al usuario del Token
+    public ResponseEntity<?> actualizarTramite(@PathVariable String id,
+            @RequestBody Tramite tramiteActualizado,
+            Principal principal) { // Principal extrae al usuario del Token
         try {
-            // Si hay un token válido, sacamos el username real. Si no, lo marcamos como SISTEMA
+            // Si hay un token válido, sacamos el username real. Si no, lo marcamos como
+            // SISTEMA
             String usernameFuncionario = (principal != null) ? principal.getName() : "SISTEMA";
-            
+
             // Le pasamos la pelota a nuestro nuevo servicio experto
             Tramite tramiteProcesado = flujoService.procesarResolucion(id, tramiteActualizado, usernameFuncionario);
-            
+
             return ResponseEntity.ok(tramiteProcesado);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(e.getMessage());
@@ -87,7 +215,7 @@ public class TramiteController {
                 .orElse(ResponseEntity.notFound().build());
     }
     // Importa NuevoTramiteRequest arriba si es necesario
-    
+
     @PostMapping("/iniciar")
     public ResponseEntity<?> iniciarTramite(@RequestBody NuevoTramiteRequest request) {
         try {
@@ -98,54 +226,25 @@ public class TramiteController {
         }
     }
 
-    // Endpoint para el Dashboard Gerencial
-    @GetMapping("/dashboard/stats")
-    public ResponseEntity<?> getDashboardStats() {
-        try {
-            long total = tramiteRepository.count();
-            long aprobados = tramiteRepository.contarPorEstado("APROBADO");
-            long rechazados = tramiteRepository.contarPorEstado("RECHAZADO");
-            long enRevision = tramiteRepository.contarPorEstado("EN_REVISION");
-            long enTiempo = tramiteRepository.contarPorEstado("EN_TIEMPO"); // Por si usas este estado
+    
 
-            // Sumamos los que están en proceso
-            long enProceso = enRevision + enTiempo; 
+    
 
-            java.util.Map<String, Object> stats = new java.util.HashMap<>();
-            stats.put("total", total);
-            stats.put("aprobados", aprobados);
-            stats.put("rechazados", rechazados);
-            stats.put("enProceso", enProceso);
-
-            return ResponseEntity.ok(stats);
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body("Error al cargar estadísticas");
-        }
+    /**
+     * Trámites donde el cliente tiene una solicitud pendiente (SOLICITUD_CLIENTE).
+     * Se usa en la bandeja del cliente para mostrarle lo que debe atender.
+     */
+    @GetMapping("/cliente/{clienteId}/pendientes")
+    public List<Tramite> obtenerPendientesCliente(@PathVariable String clienteId) {
+        return tramiteRepository.findByClienteIdAndTipoResponsableActual(
+                clienteId, TipoResponsable.SOLICITUD_CLIENTE);
     }
 
-    @GetMapping("/dashboard/por-politica")
-public ResponseEntity<?> getStatsPorPolitica() {
-    try {
-        java.util.List<Tramite> todos = tramiteRepository.findAll();
-
-        // Agrupar por procesoDefinicionId
-        java.util.Map<String, java.util.Map<String, Long>> agrupado = new java.util.HashMap<>();
-
-        for (Tramite t : todos) {
-            String procId = t.getProcesoDefinicionId();
-            if (procId == null) continue;
-
-            agrupado.computeIfAbsent(procId, k -> new java.util.HashMap<>());
-            java.util.Map<String, Long> stats = agrupado.get(procId);
-
-            String estado = t.getEstadoSemaforo() != null ? t.getEstadoSemaforo().name() : "DESCONOCIDO";
-            stats.merge("total", 1L, Long::sum);
-            stats.merge(estado, 1L, Long::sum);
-        }
-
-        return ResponseEntity.ok(agrupado);
-    } catch (Exception e) {
-        return ResponseEntity.badRequest().body("Error: " + e.getMessage());
+    /**
+     * Todos los trámites iniciados por un cliente (para su historial).
+     */
+    @GetMapping("/cliente/{clienteId}")
+    public List<Tramite> obtenerTramitesDelCliente(@PathVariable String clienteId) {
+        return tramiteRepository.findByClienteIdOrderByFechaCreacionDesc(clienteId);
     }
-}
 }

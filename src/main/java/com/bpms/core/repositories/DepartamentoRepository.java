@@ -4,8 +4,9 @@ import com.bpms.core.models.Departamento;
 import org.springframework.data.mongodb.repository.MongoRepository;
 import org.springframework.stereotype.Repository;
 
+import java.util.Optional;
+
 @Repository
 public interface DepartamentoRepository extends MongoRepository<Departamento, String> {
-    // Aquí podemos agregar búsquedas personalizadas luego, 
-    // pero por ahora el estándar de MongoRepository es suficiente.
+    Optional<Departamento> findByNombre(String nombre);
 }

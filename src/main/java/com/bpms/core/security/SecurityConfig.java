@@ -15,6 +15,7 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.util.Arrays;
+import java.util.List;
 
 @Configuration
 public class SecurityConfig {
@@ -28,37 +29,47 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-            .cors(cors -> cors.configurationSource(corsConfigurationSource())) // <-- 1. Habilitar CORS
-            .csrf(csrf -> csrf.disable()) // Desactivar CSRF para APIs REST
-            .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)) // Sin sesiones
-            .authorizeHttpRequests(auth -> auth
+                .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+                .csrf(csrf -> csrf.disable())
+                .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .authorizeHttpRequests(auth -> auth
+                        // 1. Permitir preflight
+                        .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
 
-                .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
+                        // 2. Endpoints públicos
+                        .requestMatchers(
+                                "/api/auth/**",
+                                "/api/test/**",
+                                "/api/tramites/rastrear/**",
+                                "/api/admin/procesos/publicos",
+                                "/api/archivos/ver/**")
+                        .permitAll()
 
-                .requestMatchers(
-    "/api/auth/**",
-    "/api/test/**",
-    "/api/tramites/rastrear/**",
-    "/api/admin/procesos/publicos"
-).permitAll()
-                // <-- 2. Le decimos al guardia que deje pasar a las rutas de la API si están autenticados
-                .requestMatchers("/api/departamentos/**", "/api/usuarios/**","/api/tramites/**", "/api/tramites/bandeja/").authenticated() 
-                .anyRequest().authenticated()
-            )
-            // Añadir el filtro JWT antes del filtro de Spring Security
-            .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+                        // 👇 NUEVO: endpoint IA requiere autenticación JWT (explícito por claridad)
+                        .requestMatchers("/api/ia/**").authenticated()
+
+                        // 3. Cualquier otro requiere autenticación
+                        .anyRequest().authenticated())
+                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
 
-    // <-- 3. Configuración explícita de CORS para que Angular y Spring Boot sean amigos
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(Arrays.asList("http://localhost:4200"));
-        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
-        configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type"));
-        
+        configuration.setAllowedOrigins(List.of("http://localhost:4200"));
+        configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
+
+        // 👇 CAMBIO CRÍTICO: permitir TODOS los headers (incluidos los que genera
+        // el navegador automáticamente para multipart/form-data)
+        configuration.setAllowedHeaders(List.of("*"));
+
+        // 👇 Exponer headers para respuestas
+        configuration.setExposedHeaders(List.of("Authorization", "Content-Disposition"));
+        configuration.setAllowCredentials(true);
+        configuration.setMaxAge(3600L);
+
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
         return source;

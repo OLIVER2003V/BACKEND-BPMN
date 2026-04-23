@@ -8,24 +8,87 @@ public class Paso {
     private String nombre;
     private String departamentoAsignadoId;
     private List<Transicion> transiciones = new ArrayList<>();
-    
-    // 👇 NUEVO: definición de campos del formulario de este paso
     private List<CampoFormulario> campos = new ArrayList<>();
+    private List<String> camposVisibles = new ArrayList<>();
+    // 👇 NUEVO: tipo de nodo
+    private TipoPaso tipo = TipoPaso.TAREA;
 
-    public Paso() {}
+    // 👇 NUEVO: para loops — indica si este paso puede ejecutarse múltiples veces
+    private boolean permiteReejecucion = false;
+    private TipoResponsable tipoResponsable = TipoResponsable.FUNCIONARIO;
 
-    public String getId() { return id; }
-    public void setId(String id) { this.id = id; }
+    public Paso() {
+    }
 
-    public String getNombre() { return nombre; }
-    public void setNombre(String nombre) { this.nombre = nombre; }
+    public String getId() {
+        return id;
+    }
 
-    public String getDepartamentoAsignadoId() { return departamentoAsignadoId; }
-    public void setDepartamentoAsignadoId(String departamentoAsignadoId) { this.departamentoAsignadoId = departamentoAsignadoId; }
+    public void setId(String id) {
+        this.id = id;
+    }
 
-    public List<Transicion> getTransiciones() { return transiciones; }
-    public void setTransiciones(List<Transicion> transiciones) { this.transiciones = transiciones; }
+    public String getNombre() {
+        return nombre;
+    }
 
-    public List<CampoFormulario> getCampos() { return campos; }
-    public void setCampos(List<CampoFormulario> campos) { this.campos = campos; }
+    public void setNombre(String nombre) {
+        this.nombre = nombre;
+    }
+
+    public String getDepartamentoAsignadoId() {
+        return departamentoAsignadoId;
+    }
+
+    public void setDepartamentoAsignadoId(String id) {
+        this.departamentoAsignadoId = id;
+    }
+
+    public List<Transicion> getTransiciones() {
+        return transiciones;
+    }
+
+    public void setTransiciones(List<Transicion> t) {
+        this.transiciones = t;
+    }
+
+    public List<CampoFormulario> getCampos() {
+        return campos;
+    }
+
+    public void setCampos(List<CampoFormulario> c) {
+        this.campos = c;
+    }
+
+    public TipoPaso getTipo() {
+        return tipo;
+    }
+
+    public void setTipo(TipoPaso tipo) {
+        this.tipo = tipo;
+    }
+
+    public boolean isPermiteReejecucion() {
+        return permiteReejecucion;
+    }
+
+    public void setPermiteReejecucion(boolean p) {
+        this.permiteReejecucion = p;
+    }
+
+    public TipoResponsable getTipoResponsable() {
+        return tipoResponsable;
+    }
+
+    public void setTipoResponsable(TipoResponsable t) {
+        this.tipoResponsable = t;
+    }
+
+    public List<String> getCamposVisibles() {
+        return camposVisibles;
+    }
+
+    public void setCamposVisibles(List<String> c) {
+        this.camposVisibles = c;
+    }
 }

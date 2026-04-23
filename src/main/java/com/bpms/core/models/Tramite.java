@@ -4,6 +4,7 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 import lombok.Data;
 import java.time.LocalDateTime;
+import java.util.*;
 
 @Data
 @Document(collection = "tramites")
@@ -25,6 +26,28 @@ public class Tramite {
 
     private LocalDateTime fechaCreacion;
     private LocalDateTime fechaUltimaActualizacion;
+    private TipoResponsable tipoResponsableActual;
+    private String accionActor;
+    private Map<String, Object> datosFormularioInicial = new HashMap<>();
+    // 👇 NUEVOS CAMPOS para soportar paralelismo
+
+    /**
+     * Pasos que están activos simultáneamente (para flujos paralelos).
+     * Si es secuencial, solo tiene 1 elemento (igual que pasoActualId).
+     */
+    private List<String> pasosActivosIds = new ArrayList<>();
+
+    /**
+     * Pasos ya completados en la ejecución actual.
+     * Útil para gateways de join (cuando esperan que TODOS lleguen).
+     */
+    private List<String> pasosCompletadosIds = new ArrayList<>();
+
+    /**
+     * Contador de vueltas en bucles iterativos.
+     * Previene bucles infinitos.
+     */
+    private Map<String, Integer> contadorIteraciones = new HashMap<>();
 
     public Tramite() {
         this.fechaCreacion = LocalDateTime.now();
@@ -41,5 +64,53 @@ public class Tramite {
 
     public void setDatosFormulario(java.util.Map<String, Object> datos) {
         this.datosFormulario = datos;
+    }
+
+    public List<String> getPasosActivosIds() {
+        return pasosActivosIds;
+    }
+
+    public void setPasosActivosIds(List<String> pasos) {
+        this.pasosActivosIds = pasos;
+    }
+
+    public List<String> getPasosCompletadosIds() {
+        return pasosCompletadosIds;
+    }
+
+    public void setPasosCompletadosIds(List<String> pasos) {
+        this.pasosCompletadosIds = pasos;
+    }
+
+    public Map<String, Integer> getContadorIteraciones() {
+        return contadorIteraciones;
+    }
+
+    public void setContadorIteraciones(Map<String, Integer> c) {
+        this.contadorIteraciones = c;
+    }
+
+    public TipoResponsable getTipoResponsableActual() {
+        return tipoResponsableActual;
+    }
+
+    public void setTipoResponsableActual(TipoResponsable t) {
+        this.tipoResponsableActual = t;
+    }
+
+    public Map<String, Object> getDatosFormularioInicial() {
+        return datosFormularioInicial;
+    }
+
+    public void setDatosFormularioInicial(Map<String, Object> d) {
+        this.datosFormularioInicial = d;
+    }
+
+    public String getAccionActor() {
+        return accionActor;
+    }
+
+    public void setAccionActor(String accionActor) {
+        this.accionActor = accionActor;
     }
 }
