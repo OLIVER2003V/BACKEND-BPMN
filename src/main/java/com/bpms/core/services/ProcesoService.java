@@ -30,20 +30,33 @@ public class ProcesoService {
     @Autowired
     private AuditLogRepository auditLogRepository;
 
+    // 👇 NUEVO CU16: servicio centralizado de auditoría
+    @Autowired
+    private AuditService auditService;
+
     /**
      * Guarda un nuevo proceso. Si trae bpmnXml, lo parsea automáticamente
      * para generar pasos y transiciones.
      */
     public ProcesoDefinicion guardarProceso(ProcesoDefinicion proceso) {
-        // Si trae XML, parseamos. Los pasos del frontend (con campos) se pasan
-        // como argumento al parser para que los preserve.
         if (proceso.getBpmnXml() != null && !proceso.getBpmnXml().isBlank()) {
             bpmnParser.parsearYRellenar(proceso, proceso.getBpmnXml());
         }
         proceso.setFechaCreacion(LocalDateTime.now());
         proceso.setFechaUltimaActualizacion(LocalDateTime.now());
         proceso.setActivo(true);
-        return procesoRepository.save(proceso);
+
+        ProcesoDefinicion guardado = procesoRepository.save(proceso);
+
+        // 👇 NUEVO CU16
+        auditService.registrar(
+                "SISTEMA",
+                AuditService.CAT_POLITICA,
+                "POLITICA_CREADA",
+                "Política creada: '" + guardado.getNombre() + "' (código: " + guardado.getCodigo() + ")"
+        );
+
+        return guardado;
     }
 
     public ProcesoDefinicion actualizarProceso(String id, ProcesoDefinicion datos) {
@@ -59,19 +72,25 @@ public class ProcesoService {
         existente.setFechaUltimaActualizacion(LocalDateTime.now());
 
         // 👇 CLAVE: copiamos los pasos del frontend (con sus campos) ANTES del parseo
-        // El parser los usará como fuente para preservar los campos definidos por el
-        // admin
         if (datos.getPasos() != null) {
             existente.setPasos(datos.getPasos());
         }
 
-        // Si cambió el XML, re-parseamos (el parser preserva los campos que acabamos de
-        // copiar)
         if (datos.getBpmnXml() != null && !datos.getBpmnXml().isBlank()) {
             bpmnParser.parsearYRellenar(existente, datos.getBpmnXml());
         }
 
-        return procesoRepository.save(existente);
+        ProcesoDefinicion actualizado = procesoRepository.save(existente);
+
+        // 👇 NUEVO CU16
+        auditService.registrar(
+                "SISTEMA",
+                AuditService.CAT_POLITICA,
+                "POLITICA_ACTUALIZADA",
+                "Política modificada: '" + actualizado.getNombre() + "' (estado: " + actualizado.getEstado() + ")"
+        );
+
+        return actualizado;
     }
 
     public Optional<ProcesoDefinicion> obtenerPorId(String id) {
@@ -110,7 +129,7 @@ public class ProcesoService {
             throw new RuntimeException("Errores de integridad: " + String.join(" | ", erroresValidacion));
         }
 
-        // 2. Determinar código base (si no tiene, usar el código normal)
+        // 2. Determinar código base
         String codigoBase = borrador.getCodigoBase() != null
                 ? borrador.getCodigoBase()
                 : borrador.getCodigo();
@@ -123,7 +142,6 @@ public class ProcesoService {
         int nuevoNumeroVersion = 1;
         if (activaAnterior.isPresent()) {
             ProcesoDefinicion anterior = activaAnterior.get();
-            // Marcar anterior como OBSOLETA
             anterior.setEstado(EstadoProceso.OBSOLETA);
             anterior.setMotivoObsolescencia("Reemplazada por versión nueva publicada el "
                     + LocalDateTime.now() + " por " + usernameAdmin);
@@ -142,30 +160,39 @@ public class ProcesoService {
 
         ProcesoDefinicion publicado = procesoRepository.save(borrador);
 
-        // 5. Registrar auditoría
-        AuditLog log = new AuditLog();
-        log.setTramiteId("SISTEMA_POLITICAS");
-        log.setUsuarioId(usernameAdmin);
-        log.setDepartamentoId("SISTEMA");
-        log.setAccion("POLITICA_PUBLICADA");
-        log.setDetalle("Publicada política '" + publicado.getNombre() + "' " + publicado.getVersion()
-                + (activaAnterior.isPresent() ? " (reemplaza a " + activaAnterior.get().getVersion() + ")"
-                        : " (primera versión)"));
-        log.setFechaTimestamp(LocalDateTime.now());
-        auditLogRepository.save(log);
+        // 👇 NUEVO CU16: usar AuditService centralizado (con captura de IP)
+        String detallePublicacion = "Publicada política '" + publicado.getNombre() + "' " + publicado.getVersion()
+                + (activaAnterior.isPresent()
+                        ? " (reemplaza a " + activaAnterior.get().getVersion() + " que pasó a OBSOLETA)"
+                        : " (primera versión)");
+
+        auditService.registrar(
+                usernameAdmin,
+                AuditService.CAT_POLITICA,
+                "POLITICA_PUBLICADA",
+                detallePublicacion
+        );
+
+        if (activaAnterior.isPresent()) {
+            auditService.registrar(
+                    usernameAdmin,
+                    AuditService.CAT_POLITICA,
+                    "POLITICA_OBSOLETA",
+                    "Política '" + activaAnterior.get().getNombre() + "' " + activaAnterior.get().getVersion()
+                            + " marcada OBSOLETA al publicarse v" + nuevoNumeroVersion
+            );
+        }
 
         return publicado;
     }
 
     /**
      * Crea una nueva versión en borrador basada en una política ya publicada.
-     * Esto permite editar sin romper trámites activos.
      */
     public ProcesoDefinicion crearNuevaVersion(String procesoOriginalId, String usernameAdmin) {
         ProcesoDefinicion original = procesoRepository.findById(procesoOriginalId)
                 .orElseThrow(() -> new RuntimeException("Política original no encontrada"));
 
-        // Clonar campos esenciales
         ProcesoDefinicion nueva = new ProcesoDefinicion();
         nueva.setCodigo(original.getCodigo());
         nueva.setCodigoBase(original.getCodigoBase() != null ? original.getCodigoBase() : original.getCodigo());
@@ -176,34 +203,40 @@ public class ProcesoService {
         nueva.setPasos(original.getPasos());
         nueva.setPasoInicialId(original.getPasoInicialId());
         nueva.setEstado(EstadoProceso.BORRADOR);
-        nueva.setNumeroVersion(null); // se asigna al publicar
-        nueva.setActivo(false); // inactivo hasta publicar
+        nueva.setNumeroVersion(null);
+        nueva.setActivo(false);
         nueva.setFechaCreacion(LocalDateTime.now());
 
-        return procesoRepository.save(nueva);
+        ProcesoDefinicion nuevaGuardada = procesoRepository.save(nueva);
+
+        // 👇 NUEVO CU16
+        auditService.registrar(
+                usernameAdmin,
+                AuditService.CAT_POLITICA,
+                "POLITICA_NUEVA_VERSION",
+                "Nueva versión BORRADOR creada a partir de '" + original.getNombre()
+                        + "' " + original.getVersion()
+        );
+
+        return nuevaGuardada;
     }
 
     /**
      * Valida la integridad del flujo antes de publicar.
-     * Retorna lista de errores (vacía si todo está bien).
      */
     public List<String> validarIntegridad(ProcesoDefinicion proceso) {
         List<String> errores = new ArrayList<>();
 
-        // 1. Debe tener al menos un paso
         if (proceso.getPasos() == null || proceso.getPasos().isEmpty()) {
             errores.add("La política no tiene ningún paso definido");
             return errores;
         }
 
-        // 2. Debe tener pasoInicialId
         if (proceso.getPasoInicialId() == null || proceso.getPasoInicialId().isBlank()) {
             errores.add("La política no tiene un paso inicial definido");
         }
 
-        // 3. Validar cada paso
         for (Paso p : proceso.getPasos()) {
-            // 3.1 Cada tarea de usuario debe tener departamento asignado
             if (p.getTipo() == TipoPaso.TAREA) {
                 String depto = p.getDepartamentoAsignadoId();
                 if (depto == null || depto.isBlank()
@@ -213,7 +246,6 @@ public class ProcesoService {
                 }
             }
 
-            // 3.2 Pasos que NO son de fin deben tener al menos una transición
             if (p.getTipo() == TipoPaso.TAREA
                     || p.getTipo() == TipoPaso.GATEWAY_EXCLUSIVO
                     || p.getTipo() == TipoPaso.GATEWAY_PARALELO_SPLIT) {
@@ -222,13 +254,11 @@ public class ProcesoService {
                 }
             }
 
-            // 3.3 Gateway XOR debe tener al menos 2 salidas
             if (p.getTipo() == TipoPaso.GATEWAY_EXCLUSIVO) {
                 if (p.getTransiciones() == null || p.getTransiciones().size() < 2) {
                     errores.add("El gateway '" + p.getNombre() + "' debe tener al menos 2 salidas (actualmente tiene "
                             + (p.getTransiciones() == null ? 0 : p.getTransiciones().size()) + ")");
                 }
-                // Verificar que todas las transiciones tengan nombre
                 if (p.getTransiciones() != null) {
                     for (Transicion t : p.getTransiciones()) {
                         if ((t.getNombreAccion() == null || t.getNombreAccion().isBlank())
@@ -242,7 +272,6 @@ public class ProcesoService {
             }
         }
 
-        // 4. Verificar que los IDs de destino de transiciones existen
         Set<String> idsPasos = proceso.getPasos().stream()
                 .map(Paso::getId)
                 .collect(java.util.stream.Collectors.toSet());
@@ -263,9 +292,6 @@ public class ProcesoService {
         return errores;
     }
 
-    /**
-     * Obtiene el historial de versiones de una política.
-     */
     public List<ProcesoDefinicion> obtenerHistorialVersiones(String codigoBase) {
         return procesoRepository.findByCodigoBaseOrderByNumeroVersionDesc(codigoBase);
     }

@@ -2,6 +2,7 @@ package com.bpms.core.security;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -14,7 +15,6 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
-import java.util.Arrays;
 import java.util.List;
 
 @Configuration
@@ -34,7 +34,7 @@ public class SecurityConfig {
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         // 1. Permitir preflight
-                        .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
+                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
 
                         // 2. Endpoints públicos
                         .requestMatchers(
@@ -42,11 +42,25 @@ public class SecurityConfig {
                                 "/api/test/**",
                                 "/api/tramites/rastrear/**",
                                 "/api/admin/procesos/publicos",
-                                "/api/archivos/ver/**")
+                                "/api/archivos/ver/**",
+                                "/api/tramites/test-push/**", "/ws-colaboracion/**")
                         .permitAll()
 
-                        // 👇 NUEVO: endpoint IA requiere autenticación JWT (explícito por claridad)
+                        // 👇 NUEVO CU16: GARANTÍA DE INMUTABILIDAD DEL LOG DE AUDITORÍA
+                        // Cualquier PUT/DELETE/PATCH a /api/auditoria/** se rechaza con 405.
+                        // Spring Security al denegar estos métodos antes del routing produce 405,
+                        // cumpliendo el Flujo Alternativo A1 del CU.
+                        .requestMatchers(HttpMethod.PUT, "/api/auditoria/**").denyAll()
+                        .requestMatchers(HttpMethod.DELETE, "/api/auditoria/**").denyAll()
+                        .requestMatchers(HttpMethod.PATCH, "/api/auditoria/**").denyAll()
+
+                        // 👇 NUEVO CU16: solo lectura, requiere autenticación
+                        // (la restricción a ADMIN se controla en el frontend con guards)
+                        .requestMatchers("/api/auditoria/**").authenticated()
+
+                        // Endpoints existentes que requieren JWT explícito
                         .requestMatchers("/api/ia/**").authenticated()
+                        .requestMatchers("/api/reportes/**").authenticated()
 
                         // 3. Cualquier otro requiere autenticación
                         .anyRequest().authenticated())
@@ -61,11 +75,7 @@ public class SecurityConfig {
         configuration.setAllowedOrigins(List.of("http://localhost:4200"));
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
 
-        // 👇 CAMBIO CRÍTICO: permitir TODOS los headers (incluidos los que genera
-        // el navegador automáticamente para multipart/form-data)
         configuration.setAllowedHeaders(List.of("*"));
-
-        // 👇 Exponer headers para respuestas
         configuration.setExposedHeaders(List.of("Authorization", "Content-Disposition"));
         configuration.setAllowCredentials(true);
         configuration.setMaxAge(3600L);

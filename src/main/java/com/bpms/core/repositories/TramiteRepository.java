@@ -18,7 +18,11 @@ public interface TramiteRepository extends MongoRepository<Tramite, String> {
     // === Búsquedas por cliente ===
     List<Tramite> findByClienteIdOrderByFechaCreacionDesc(String clienteId);
 
+
     List<Tramite> findByClienteIdAndTipoResponsableActual(String clienteId, TipoResponsable tipo);
+
+    // === Búsquedas para Minería de Procesos ===
+    List<Tramite> findByProcesoDefinicionId(String procesoDefinicionId);
 
     // === Código de seguimiento (rastreo público) ===
     Optional<Tramite> findByCodigoSeguimiento(String codigo);

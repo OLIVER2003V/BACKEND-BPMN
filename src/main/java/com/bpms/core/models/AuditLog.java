@@ -9,30 +9,42 @@ public class AuditLog {
 
     @Id
     private String id;
-    
+
     // Sobre QUÉ documento se hizo la acción
-    private String tramiteId; 
-    
+    private String tramiteId;
+
     // QUIÉN hizo la acción
-    private String usuarioId; 
-    
-    // DESDE DÓNDE se hizo (para saber en qué departamento estaba cuando opinó)
-    private String departamentoId; 
-    
-    // QUÉ ACCIÓN tomó (Ej: "APROBADO", "RECHAZADO", "CREADO", "DERIVADO")
-    private String accion; 
-    
-    // QUÉ DIJO (El comentario o dictamen técnico)
-    private String detalle; 
-    
-    // CUÁNDO ocurrió (Generado automáticamente por el servidor, imposible de falsificar por el cliente)
+    private String usuarioId;
+
+    // DESDE DÓNDE se hizo (departamento del actor)
+    private String departamentoId;
+
+    // QUÉ ACCIÓN tomó (Ej: "APROBADO", "RECHAZADO", "POLITICA_PUBLICADA", "AUTH_LOGIN_OK")
+    private String accion;
+
+    // CU14: qué nodo se resolvió
+    private String pasoId;
+    private String pasoNombre;
+
+    // QUÉ DIJO (Comentario o dictamen técnico)
+    private String detalle;
+
+    // CUÁNDO ocurrió (servidor, no falsificable por cliente)
     private LocalDateTime fechaTimestamp = LocalDateTime.now();
 
+    // Payload del formulario (puede contener PII, solo visible para ADMIN)
     private java.util.Map<String, Object> datosFormulario;
+
+    // 👇 NUEVO CU16: IP de origen del request (X-Forwarded-For o RemoteAddr)
+    private String ipOrigen;
+
+    // 👇 NUEVO CU16: categoría para filtrar rápido en la UI
+    // Valores: AUTH, POLITICA, USUARIO, DEPARTAMENTO, TRAMITE, SISTEMA
+    private String categoria;
 
     public AuditLog() {}
 
-    // Getters y Setters
+    // === Getters y Setters ===
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
 
@@ -56,4 +68,17 @@ public class AuditLog {
 
     public java.util.Map<String, Object> getDatosFormulario() { return datosFormulario; }
     public void setDatosFormulario(java.util.Map<String, Object> datosFormulario) { this.datosFormulario = datosFormulario; }
+
+    public String getPasoId() { return pasoId; }
+    public void setPasoId(String pasoId) { this.pasoId = pasoId; }
+
+    public String getPasoNombre() { return pasoNombre; }
+    public void setPasoNombre(String pasoNombre) { this.pasoNombre = pasoNombre; }
+
+    // 👇 NUEVO CU16
+    public String getIpOrigen() { return ipOrigen; }
+    public void setIpOrigen(String ipOrigen) { this.ipOrigen = ipOrigen; }
+
+    public String getCategoria() { return categoria; }
+    public void setCategoria(String categoria) { this.categoria = categoria; }
 }

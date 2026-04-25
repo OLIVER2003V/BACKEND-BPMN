@@ -2,8 +2,10 @@ package com.bpms.core.controllers;
 
 import com.bpms.core.models.Usuario;
 import com.bpms.core.repositories.UsuarioRepository;
+import com.bpms.core.services.AuditService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
@@ -21,6 +23,10 @@ public class UsuarioController {
     @Autowired
     private PasswordEncoder passwordEncoder;
 
+    // 👇 NUEVO CU16
+    @Autowired
+    private AuditService auditService;
+
     @GetMapping
     public List<Usuario> obtenerTodos() {
         return usuarioRepository.findAll();
@@ -35,7 +41,6 @@ public class UsuarioController {
 
     @PostMapping
     public ResponseEntity<?> crearUsuario(@RequestBody Usuario usuario) {
-        // Validar que el username no exista
         if (usuarioRepository.findByUsername(usuario.getUsername()).isPresent()) {
             return ResponseEntity.badRequest().body("El nombre de usuario ya está en uso");
         }
@@ -46,35 +51,70 @@ public class UsuarioController {
             usuario.setEstadoDisponibilidad("DISPONIBLE");
         }
 
-        return ResponseEntity.ok(usuarioRepository.save(usuario));
+        Usuario guardado = usuarioRepository.save(usuario);
+
+        // 👇 NUEVO CU16
+        auditService.registrar(
+                actorActual(),
+                AuditService.CAT_USUARIO,
+                "USUARIO_CREADO",
+                "Usuario creado: @" + guardado.getUsername() + " (rol: " + guardado.getRol() + ")"
+        );
+
+        return ResponseEntity.ok(guardado);
     }
 
     @PutMapping("/{id}")
     public ResponseEntity<?> actualizarUsuario(@PathVariable String id, @RequestBody Usuario datos) {
         return usuarioRepository.findById(id)
                 .map(existente -> {
-                    // Campos de identidad
-                    if (datos.getUsername() != null)
+                    StringBuilder cambios = new StringBuilder();
+
+                    if (datos.getUsername() != null && !datos.getUsername().equals(existente.getUsername())) {
+                        cambios.append("username: ").append(existente.getUsername())
+                                .append(" → ").append(datos.getUsername()).append("; ");
                         existente.setUsername(datos.getUsername());
-                    if (datos.getNombreCompleto() != null)
+                    }
+                    if (datos.getNombreCompleto() != null) {
                         existente.setNombreCompleto(datos.getNombreCompleto());
-                    if (datos.getEmail() != null)
+                    }
+                    if (datos.getEmail() != null) {
                         existente.setEmail(datos.getEmail());
-
-                    // Campos operativos
-                    if (datos.getRol() != null)
-                        existente.setRol(datos.getRol());
-                    if (datos.getDepartamentoId() != null)
-                        existente.setDepartamentoId(datos.getDepartamentoId());
-                    if (datos.getEstadoDisponibilidad() != null)
-                        existente.setEstadoDisponibilidad(datos.getEstadoDisponibilidad());
-
-                    // Password opcional (solo si viene con contenido)
-                    if (datos.getPassword() != null && !datos.getPassword().isBlank()) {
-                        existente.setPassword(passwordEncoder.encode(datos.getPassword()));
                     }
 
-                    return ResponseEntity.ok((Object) usuarioRepository.save(existente));
+                    if (datos.getRol() != null && !datos.getRol().equals(existente.getRol())) {
+                        cambios.append("rol: ").append(existente.getRol())
+                                .append(" → ").append(datos.getRol()).append("; ");
+                        existente.setRol(datos.getRol());
+                    }
+                    if (datos.getDepartamentoId() != null) {
+                        existente.setDepartamentoId(datos.getDepartamentoId());
+                    }
+                    if (datos.getEstadoDisponibilidad() != null) {
+                        existente.setEstadoDisponibilidad(datos.getEstadoDisponibilidad());
+                    }
+
+                    boolean cambioPassword = false;
+                    if (datos.getPassword() != null && !datos.getPassword().isBlank()) {
+                        existente.setPassword(passwordEncoder.encode(datos.getPassword()));
+                        cambioPassword = true;
+                    }
+
+                    Usuario guardado = usuarioRepository.save(existente);
+
+                    // 👇 NUEVO CU16
+                    String detalle = "Usuario @" + guardado.getUsername() + " modificado";
+                    if (cambios.length() > 0) detalle += " — cambios: " + cambios.toString().trim();
+                    if (cambioPassword) detalle += " [contraseña actualizada]";
+
+                    auditService.registrar(
+                            actorActual(),
+                            AuditService.CAT_USUARIO,
+                            "USUARIO_ACTUALIZADO",
+                            detalle
+                    );
+
+                    return ResponseEntity.ok((Object) guardado);
                 })
                 .orElse(ResponseEntity.notFound().build());
     }
@@ -88,18 +128,56 @@ public class UsuarioController {
 
         return usuarioRepository.findById(id)
                 .map(usuario -> {
+                    String estadoAnterior = usuario.getEstadoDisponibilidad();
                     usuario.setEstadoDisponibilidad(nuevoEstado);
-                    return ResponseEntity.ok((Object) usuarioRepository.save(usuario));
+                    Usuario guardado = usuarioRepository.save(usuario);
+
+                    // 👇 NUEVO CU16
+                    auditService.registrar(
+                            actorActual(),
+                            AuditService.CAT_USUARIO,
+                            "USUARIO_CAMBIO_ESTADO",
+                            "Disponibilidad de @" + guardado.getUsername()
+                                    + ": " + estadoAnterior + " → " + nuevoEstado
+                    );
+
+                    return ResponseEntity.ok((Object) guardado);
                 })
                 .orElse(ResponseEntity.notFound().build());
     }
 
     @DeleteMapping("/{id}")
     public ResponseEntity<?> eliminarUsuario(@PathVariable String id) {
-        if (!usuarioRepository.existsById(id)) {
-            return ResponseEntity.notFound().build();
-        }
-        usuarioRepository.deleteById(id);
-        return ResponseEntity.ok(Map.of("mensaje", "Usuario eliminado correctamente"));
+        return usuarioRepository.findById(id)
+                .map(usuario -> {
+                    usuarioRepository.deleteById(id);
+
+                    // 👇 NUEVO CU16
+                    auditService.registrar(
+                            actorActual(),
+                            AuditService.CAT_USUARIO,
+                            "USUARIO_ELIMINADO",
+                            "Usuario eliminado: @" + usuario.getUsername()
+                                    + " (rol: " + usuario.getRol() + ", id: " + id + ")"
+                    );
+
+                    return ResponseEntity.ok((Object) Map.of("mensaje", "Usuario eliminado correctamente"));
+                })
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    /**
+     * 👇 NUEVO CU16: extrae el username del contexto de seguridad JWT.
+     * Devuelve "SISTEMA" si no hay autenticación (caso raro en endpoints protegidos).
+     */
+    private String actorActual() {
+        try {
+            var auth = SecurityContextHolder.getContext().getAuthentication();
+            if (auth != null && auth.isAuthenticated()) {
+                String name = auth.getName();
+                return (name != null && !name.equals("anonymousUser")) ? name : "SISTEMA";
+            }
+        } catch (Exception ignored) {}
+        return "SISTEMA";
     }
 }

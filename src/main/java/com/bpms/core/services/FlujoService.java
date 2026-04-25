@@ -6,7 +6,7 @@ import com.bpms.core.repositories.ProcesoDefinicionRepository;
 import com.bpms.core.repositories.TramiteRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-
+import com.bpms.core.services.FirebasePushService;
 import java.time.LocalDateTime;
 import java.util.*;
 
@@ -21,7 +21,13 @@ public class FlujoService {
     private AuditLogRepository auditLogRepository;
     @Autowired
     private ProcesoDefinicionRepository procesoRepository;
+    @Autowired
+    private com.bpms.core.repositories.UsuarioRepository usuarioRepository;
+    @Autowired
+    private FirebasePushService pushService;
 
+    @Autowired
+    private com.bpms.core.services.AuditService auditService;
     /**
      * Cuando un FUNCIONARIO o CLIENTE resuelve un paso, el motor deriva al
      * siguiente.
@@ -98,16 +104,50 @@ public class FlujoService {
         Tramite guardado = tramiteRepository.save(tramite);
 
         // Auditoría
+        // Auditoría
         AuditLog log = new AuditLog();
         log.setTramiteId(guardado.getId());
         log.setUsuarioId(usernameActor);
         log.setDepartamentoId(pasoActual.getDepartamentoAsignadoId());
+        log.setPasoId(pasoActual.getId());
+        log.setPasoNombre(pasoActual.getNombre());
         log.setAccion(accionActor);
         log.setDetalle("Resolución emitida. " + String.join(" | ", mensajes));
         log.setFechaTimestamp(LocalDateTime.now());
         log.setDatosFormulario(datosActualizados.getDatosFormulario());
+        // 👇 NUEVO CU16: categorizar + capturar IP
+        log.setCategoria("TRAMITE");
+        log.setIpOrigen(auditService.extraerIpDelRequestActual());
         auditLogRepository.save(log);
 
+        // 👇 NUEVO: copias effectively-final para el lambda (accionActor fue reasignado
+        // arriba)
+        final String accionActorFinal = accionActor;
+        final EstadoTramite estadoDerivadoFinal = estadoDerivado;
+        final Paso pasoActualFinal = pasoActual;
+
+        // 👇 SOLUCIÓN: Buscar por Username en lugar de ID
+        try {
+            // Cambiamos findById por findByUsername porque guardado.getClienteId() es el
+            // username
+            usuarioRepository.findByUsername(guardado.getClienteId()).ifPresent(cliente -> {
+                if (cliente.getFcmToken() != null && !cliente.getFcmToken().isBlank()) {
+                    String titulo = "Trámite " + guardado.getCodigoSeguimiento() + " Actualizado";
+                    String cuerpo = "El paso '" + pasoActualFinal.getNombre() + "' fue resuelto como: "
+                            + accionActorFinal;
+
+                    if ("FIN".equals(guardado.getPasoActualId())) {
+                        titulo = "Trámite " + guardado.getCodigoSeguimiento() + " Finalizado";
+                        cuerpo = "Tu trámite ha concluido su ciclo con estado: " + estadoDerivadoFinal.name();
+                    }
+
+                    // Disparo a Firebase
+                    pushService.enviarNotificacionPush(cliente.getFcmToken(), titulo, cuerpo);
+                }
+            });
+        } catch (Exception e) {
+            System.err.println("Error al intentar enviar push automático: " + e.getMessage());
+        }
         return guardado;
     }
 
@@ -164,112 +204,114 @@ public class FlujoService {
     }
 
     private void procesarSiguientePaso(Tramite tramite, ProcesoDefinicion mapa,
-        String destinoId, List<String> mensajes) {
-    if ("FIN".equals(destinoId)) {
-        mensajes.add("Rama finalizada.");
-        return;
-    }
-    if ("FIN_TERMINA_TODO".equals(destinoId)) {
-        tramite.getPasosActivosIds().clear();
-        mensajes.add("Proceso terminado forzadamente.");
-        return;
-    }
+            String destinoId, List<String> mensajes) {
+        if ("FIN".equals(destinoId)) {
+            mensajes.add("Rama finalizada.");
+            return;
+        }
+        if ("FIN_TERMINA_TODO".equals(destinoId)) {
+            tramite.getPasosActivosIds().clear();
+            mensajes.add("Proceso terminado forzadamente.");
+            return;
+        }
 
-    Paso destino = buscarPaso(mapa, destinoId);
-    if (destino == null) {
-        mensajes.add("Paso destino no encontrado: " + destinoId);
-        return;
-    }
+        Paso destino = buscarPaso(mapa, destinoId);
+        if (destino == null) {
+            mensajes.add("Paso destino no encontrado: " + destinoId);
+            return;
+        }
 
-    switch (destino.getTipo()) {
-        case GATEWAY_EXCLUSIVO:
-            // 👇 NUEVO: Resolver el gateway XOR con la acción libre del trámite
-            if (!destino.getTransiciones().isEmpty()) {
-                String accion = tramite.getAccionActor();
-                if (accion == null || accion.isBlank()) {
-                    accion = tramite.getEstadoSemaforo() != null
-                            ? tramite.getEstadoSemaforo().name()
-                            : "APROBADO";
+        switch (destino.getTipo()) {
+            case GATEWAY_EXCLUSIVO:
+                // 👇 NUEVO: Resolver el gateway XOR con la acción libre del trámite
+                if (!destino.getTransiciones().isEmpty()) {
+                    String accion = tramite.getAccionActor();
+                    if (accion == null || accion.isBlank()) {
+                        accion = tramite.getEstadoSemaforo() != null
+                                ? tramite.getEstadoSemaforo().name()
+                                : "APROBADO";
+                    }
+                    final String accionFinal = accion;
+
+                    Transicion elegida = destino.getTransiciones().stream()
+                            .filter(t -> (t.getNombreAccion() != null
+                                    && t.getNombreAccion().equalsIgnoreCase(accionFinal))
+                                    || (t.getEstadoCondicion() != null
+                                            && t.getEstadoCondicion().equalsIgnoreCase(accionFinal)))
+                            .findFirst()
+                            .orElseGet(() -> destino.getTransiciones().stream()
+                                    .filter(t -> "DEFAULT".equalsIgnoreCase(t.getEstadoCondicion())
+                                            || "DEFAULT".equalsIgnoreCase(t.getNombreAccion()))
+                                    .findFirst()
+                                    .orElse(destino.getTransiciones().get(0)));
+
+                    mensajes.add("Decisión del gateway: " + (elegida.getNombreAccion() != null
+                            ? elegida.getNombreAccion()
+                            : elegida.getEstadoCondicion()));
+                    procesarSiguientePaso(tramite, mapa, elegida.getPasoDestinoId(), mensajes);
                 }
-                final String accionFinal = accion;
+                break;
 
-                Transicion elegida = destino.getTransiciones().stream()
-                        .filter(t -> (t.getNombreAccion() != null && t.getNombreAccion().equalsIgnoreCase(accionFinal))
-                                  || (t.getEstadoCondicion() != null && t.getEstadoCondicion().equalsIgnoreCase(accionFinal)))
-                        .findFirst()
-                        .orElseGet(() -> destino.getTransiciones().stream()
-                                .filter(t -> "DEFAULT".equalsIgnoreCase(t.getEstadoCondicion())
-                                          || "DEFAULT".equalsIgnoreCase(t.getNombreAccion()))
-                                .findFirst()
-                                .orElse(destino.getTransiciones().get(0)));
+            case GATEWAY_PARALELO_SPLIT:
+                mensajes.add("Bifurcación paralela activada.");
+                for (Transicion t : destino.getTransiciones()) {
+                    procesarSiguientePaso(tramite, mapa, t.getPasoDestinoId(), mensajes);
+                }
+                break;
 
-                mensajes.add("Decisión del gateway: " + (elegida.getNombreAccion() != null
-                        ? elegida.getNombreAccion()
-                        : elegida.getEstadoCondicion()));
-                procesarSiguientePaso(tramite, mapa, elegida.getPasoDestinoId(), mensajes);
-            }
-            break;
+            case GATEWAY_PARALELO_JOIN:
+                if (todasRamasCompletadas(destino, mapa, tramite)) {
+                    mensajes.add("Sincronización de ramas completada.");
+                    if (!destino.getTransiciones().isEmpty()) {
+                        procesarSiguientePaso(tramite, mapa,
+                                destino.getTransiciones().get(0).getPasoDestinoId(), mensajes);
+                    }
+                } else {
+                    mensajes.add("Esperando que terminen otras ramas paralelas.");
+                }
+                break;
 
-        case GATEWAY_PARALELO_SPLIT:
-            mensajes.add("Bifurcación paralela activada.");
-            for (Transicion t : destino.getTransiciones()) {
-                procesarSiguientePaso(tramite, mapa, t.getPasoDestinoId(), mensajes);
-            }
-            break;
+            case TAREA:
+            case EVENTO_INTERMEDIO:
+                // Verificar iteración (bucles)
+                if (destino.isPermiteReejecucion()) {
+                    int iteraciones = tramite.getContadorIteraciones().getOrDefault(destinoId, 0);
+                    if (iteraciones >= MAX_ITERACIONES) {
+                        mensajes.add("⚠️ Límite de iteraciones alcanzado en: " + destino.getNombre());
+                        return;
+                    }
+                    tramite.getContadorIteraciones().put(destinoId, iteraciones + 1);
+                    tramite.getPasosCompletadosIds().remove(destinoId);
+                }
 
-        case GATEWAY_PARALELO_JOIN:
-            if (todasRamasCompletadas(destino, mapa, tramite)) {
-                mensajes.add("Sincronización de ramas completada.");
+                // Activar el paso
+                if (!tramite.getPasosActivosIds().contains(destinoId)) {
+                    tramite.getPasosActivosIds().add(destinoId);
+                }
+
+                TipoResponsable resp = destino.getTipoResponsable() != null
+                        ? destino.getTipoResponsable()
+                        : TipoResponsable.FUNCIONARIO;
+
+                switch (resp) {
+                    case SOLICITUD_CLIENTE:
+                        mensajes.add("🔔 Se solicitó información adicional al cliente: " + destino.getNombre());
+                        break;
+                    case FUNCIONARIO:
+                        mensajes.add("Derivado al funcionario: " + destino.getNombre());
+                        break;
+                    default:
+                        mensajes.add("Derivado a: " + destino.getNombre());
+                }
+                break;
+
+            default:
                 if (!destino.getTransiciones().isEmpty()) {
                     procesarSiguientePaso(tramite, mapa,
                             destino.getTransiciones().get(0).getPasoDestinoId(), mensajes);
                 }
-            } else {
-                mensajes.add("Esperando que terminen otras ramas paralelas.");
-            }
-            break;
-
-        case TAREA:
-        case EVENTO_INTERMEDIO:
-            // Verificar iteración (bucles)
-            if (destino.isPermiteReejecucion()) {
-                int iteraciones = tramite.getContadorIteraciones().getOrDefault(destinoId, 0);
-                if (iteraciones >= MAX_ITERACIONES) {
-                    mensajes.add("⚠️ Límite de iteraciones alcanzado en: " + destino.getNombre());
-                    return;
-                }
-                tramite.getContadorIteraciones().put(destinoId, iteraciones + 1);
-                tramite.getPasosCompletadosIds().remove(destinoId);
-            }
-
-            // Activar el paso
-            if (!tramite.getPasosActivosIds().contains(destinoId)) {
-                tramite.getPasosActivosIds().add(destinoId);
-            }
-
-            TipoResponsable resp = destino.getTipoResponsable() != null
-                    ? destino.getTipoResponsable()
-                    : TipoResponsable.FUNCIONARIO;
-
-            switch (resp) {
-                case SOLICITUD_CLIENTE:
-                    mensajes.add("🔔 Se solicitó información adicional al cliente: " + destino.getNombre());
-                    break;
-                case FUNCIONARIO:
-                    mensajes.add("Derivado al funcionario: " + destino.getNombre());
-                    break;
-                default:
-                    mensajes.add("Derivado a: " + destino.getNombre());
-            }
-            break;
-
-        default:
-            if (!destino.getTransiciones().isEmpty()) {
-                procesarSiguientePaso(tramite, mapa,
-                        destino.getTransiciones().get(0).getPasoDestinoId(), mensajes);
-            }
+        }
     }
-}
 
     private boolean todasRamasCompletadas(Paso gatewayJoin, ProcesoDefinicion mapa, Tramite tramite) {
         List<String> predecesores = new ArrayList<>();
@@ -384,16 +426,22 @@ public class FlujoService {
         Tramite guardado = tramiteRepository.save(tramite);
 
         // Auditoría
+        // Auditoría
         AuditLog log = new AuditLog();
         log.setTramiteId(guardado.getId());
         log.setUsuarioId(request.getClienteId());
         log.setDepartamentoId("PORTAL_WEB");
+        log.setPasoId(pasoInicial.getId());
+        log.setPasoNombre(pasoInicial.getNombre());
         log.setAccion("INICIADO");
         log.setDetalle("El cliente inició la solicitud '" + mapa.getNombre() + "'. " + String.join(" | ", mensajes));
         log.setFechaTimestamp(LocalDateTime.now());
         if (request.getDatosFormularioInicial() != null) {
             log.setDatosFormulario(request.getDatosFormularioInicial());
         }
+        // 👇 NUEVO CU16: categorizar + capturar IP
+        log.setCategoria("TRAMITE");
+        log.setIpOrigen(auditService.extraerIpDelRequestActual());
         auditLogRepository.save(log);
 
         return guardado;

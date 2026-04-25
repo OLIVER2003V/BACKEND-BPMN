@@ -16,6 +16,7 @@ public class Usuario {
     private String password;
     private String nombreCompleto;  // 👈 NUEVO
     private String email;           // 👈 NUEVO
+    private String fcmToken; // 👈 NUEVO: Aquí guardaremos el token del teléfono
 
     private Rol rol; 
     private String departamentoId; 

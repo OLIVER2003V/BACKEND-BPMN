@@ -17,6 +17,7 @@ public class Paso {
     private boolean permiteReejecucion = false;
     private TipoResponsable tipoResponsable = TipoResponsable.FUNCIONARIO;
 
+    private Double slaHoras;
     public Paso() {
     }
 
@@ -90,5 +91,12 @@ public class Paso {
 
     public void setCamposVisibles(List<String> c) {
         this.camposVisibles = c;
+    }
+    public Double getSlaHoras() {
+        return slaHoras;
+    }
+
+    public void setSlaHoras(Double slaHoras) {
+        this.slaHoras = slaHoras;
     }
 }

@@ -8,6 +8,7 @@ import java.util.List;
 
 @Repository
 public interface AuditLogRepository extends MongoRepository<AuditLog, String> {
-    // Busca todo el historial de un expediente específico y lo devuelve ordenado del más antiguo al más nuevo
+
+    // Histórico de un trámite específico (lo usa FlujoService para hoja de ruta)
     List<AuditLog> findByTramiteIdOrderByFechaTimestampAsc(String tramiteId);
 }

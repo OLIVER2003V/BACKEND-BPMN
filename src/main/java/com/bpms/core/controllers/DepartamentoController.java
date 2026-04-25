@@ -4,8 +4,10 @@ import com.bpms.core.models.Departamento;
 import com.bpms.core.repositories.DepartamentoRepository;
 import com.bpms.core.repositories.UsuarioRepository;
 import com.bpms.core.repositories.TramiteRepository;
+import com.bpms.core.services.AuditService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
@@ -25,6 +27,10 @@ public class DepartamentoController {
 
     @Autowired
     private TramiteRepository tramiteRepository;
+
+    // 👇 NUEVO CU16
+    @Autowired
+    private AuditService auditService;
 
     @GetMapping
     public List<Departamento> obtenerTodos() {
@@ -46,12 +52,10 @@ public class DepartamentoController {
         for (Departamento d : todos) {
             Map<String, Object> deptoStats = new HashMap<>();
 
-            // Contar funcionarios asignados
             long funcionarios = usuarioRepository.findAll().stream()
                     .filter(u -> d.getId().equals(u.getDepartamentoId()))
                     .count();
 
-            // Contar trámites actualmente en este depto
             long tramitesActivos = tramiteRepository.findAll().stream()
                     .filter(t -> d.getId().equals(t.getDepartamentoActualId()))
                     .count();
@@ -66,32 +70,62 @@ public class DepartamentoController {
 
     @PostMapping
     public ResponseEntity<?> crear(@RequestBody Departamento departamento) {
-        // Validar nombre único
         if (departamentoRepository.findByNombre(departamento.getNombre()).isPresent()) {
             return ResponseEntity.badRequest().body("Ya existe un departamento con ese nombre");
         }
 
         departamento.setFechaCreacion(LocalDateTime.now());
         departamento.setActivo(true);
-        return ResponseEntity.ok(departamentoRepository.save(departamento));
+        Departamento guardado = departamentoRepository.save(departamento);
+
+        // 👇 NUEVO CU16
+        auditService.registrar(
+                actorActual(),
+                AuditService.CAT_DEPARTAMENTO,
+                "DEPARTAMENTO_CREADO",
+                "Departamento creado: '" + guardado.getNombre() + "'"
+        );
+
+        return ResponseEntity.ok(guardado);
     }
 
     @PutMapping("/{id}")
     public ResponseEntity<?> actualizar(@PathVariable String id, @RequestBody Departamento datos) {
         return departamentoRepository.findById(id)
                 .map(existente -> {
-                    // Si cambia el nombre, validar que no choque con otro
+                    StringBuilder cambios = new StringBuilder();
+
                     if (datos.getNombre() != null && !datos.getNombre().equals(existente.getNombre())) {
                         if (departamentoRepository.findByNombre(datos.getNombre()).isPresent()) {
                             return ResponseEntity.badRequest().body((Object) "Ya existe un departamento con ese nombre");
                         }
+                        cambios.append("nombre: '").append(existente.getNombre())
+                                .append("' → '").append(datos.getNombre()).append("'; ");
                         existente.setNombre(datos.getNombre());
                     }
 
                     if (datos.getDescripcion() != null) existente.setDescripcion(datos.getDescripcion());
+
+                    if (datos.isActivo() != existente.isActivo()) {
+                        cambios.append("activo: ").append(existente.isActivo())
+                                .append(" → ").append(datos.isActivo()).append("; ");
+                    }
                     existente.setActivo(datos.isActivo());
 
-                    return ResponseEntity.ok((Object) departamentoRepository.save(existente));
+                    Departamento guardado = departamentoRepository.save(existente);
+
+                    // 👇 NUEVO CU16
+                    String detalle = "Departamento '" + guardado.getNombre() + "' modificado";
+                    if (cambios.length() > 0) detalle += " — cambios: " + cambios.toString().trim();
+
+                    auditService.registrar(
+                            actorActual(),
+                            AuditService.CAT_DEPARTAMENTO,
+                            "DEPARTAMENTO_ACTUALIZADO",
+                            detalle
+                    );
+
+                    return ResponseEntity.ok((Object) guardado);
                 })
                 .orElse(ResponseEntity.notFound().build());
     }
@@ -100,8 +134,20 @@ public class DepartamentoController {
     public ResponseEntity<?> toggleActivo(@PathVariable String id) {
         return departamentoRepository.findById(id)
                 .map(d -> {
+                    boolean estadoAnterior = d.isActivo();
                     d.setActivo(!d.isActivo());
-                    return ResponseEntity.ok((Object) departamentoRepository.save(d));
+                    Departamento guardado = departamentoRepository.save(d);
+
+                    // 👇 NUEVO CU16
+                    auditService.registrar(
+                            actorActual(),
+                            AuditService.CAT_DEPARTAMENTO,
+                            "DEPARTAMENTO_TOGGLE",
+                            "Departamento '" + guardado.getNombre() + "' "
+                                    + (estadoAnterior ? "DESACTIVADO" : "ACTIVADO")
+                    );
+
+                    return ResponseEntity.ok((Object) guardado);
                 })
                 .orElse(ResponseEntity.notFound().build());
     }
@@ -112,7 +158,8 @@ public class DepartamentoController {
             return ResponseEntity.notFound().build();
         }
 
-        // Validar que no tenga funcionarios asignados
+        Departamento deptoARemover = departamentoRepository.findById(id).orElse(null);
+
         long funcionarios = usuarioRepository.findAll().stream()
                 .filter(u -> id.equals(u.getDepartamentoId()))
                 .count();
@@ -124,7 +171,6 @@ public class DepartamentoController {
             );
         }
 
-        // Validar que no tenga trámites activos
         long tramitesActivos = tramiteRepository.findAll().stream()
                 .filter(t -> id.equals(t.getDepartamentoActualId()))
                 .count();
@@ -137,6 +183,29 @@ public class DepartamentoController {
         }
 
         departamentoRepository.deleteById(id);
+
+        // 👇 NUEVO CU16
+        auditService.registrar(
+                actorActual(),
+                AuditService.CAT_DEPARTAMENTO,
+                "DEPARTAMENTO_ELIMINADO",
+                "Departamento eliminado: '" + (deptoARemover != null ? deptoARemover.getNombre() : id) + "'"
+        );
+
         return ResponseEntity.ok(Map.of("mensaje", "Departamento eliminado correctamente"));
+    }
+
+    /**
+     * 👇 NUEVO CU16: extrae el username del contexto de seguridad JWT.
+     */
+    private String actorActual() {
+        try {
+            var auth = SecurityContextHolder.getContext().getAuthentication();
+            if (auth != null && auth.isAuthenticated()) {
+                String name = auth.getName();
+                return (name != null && !name.equals("anonymousUser")) ? name : "SISTEMA";
+            }
+        } catch (Exception ignored) {}
+        return "SISTEMA";
     }
 }

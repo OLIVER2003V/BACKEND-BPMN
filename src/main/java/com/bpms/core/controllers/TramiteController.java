@@ -21,6 +21,19 @@ public class TramiteController {
     @Autowired
     private TramiteRepository tramiteRepository;
 
+    @Autowired
+    private com.bpms.core.services.FirebasePushService pushService;
+    // Endpoint temporal para probar la notificación PUSH real
+    @GetMapping("/test-push/{token}")
+    public ResponseEntity<?> testPushNotification(@PathVariable String token) {
+        pushService.enviarNotificacionPush(
+            token, 
+            "🚀 Trámite Actualizado", 
+            "¡Magia! Tu trámite ahora está en Revisión."
+        );
+        return ResponseEntity.ok("Push intentado. Revisa la consola.");
+    }
+
     // 1. Crear un trámite nuevo (Lo usará el CLIENTE)
     @PostMapping
     public Tramite crearTramite(@RequestBody Tramite tramite) {

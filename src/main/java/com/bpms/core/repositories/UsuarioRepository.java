@@ -8,7 +8,8 @@ import java.util.Optional;
 
 @Repository
 public interface UsuarioRepository extends MongoRepository<Usuario, String> {
-    // Spring Boot es tan inteligente que solo con nombrar este método, 
+    // Spring Boot es tan inteligente que solo con nombrar este método,
     // él ya sabe cómo buscar un usuario por su username en Mongo.
     Optional<Usuario> findByUsername(String username);
+    
 }

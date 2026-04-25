@@ -23,29 +23,49 @@ public class AuthService {
     @Autowired
     private JwtUtil jwtUtil;
 
+    @Autowired
+    private AuditService auditService;
+
     // Registro de nuevos usuarios
     public Usuario registrar(Usuario usuario) {
-        // AQUÍ OCURRE LA MAGIA CORRECTA (Solo 1 vez)
+        // Encriptar la contraseña (asumimos que el Controller ya validó que no sea null)
         usuario.setPassword(passwordEncoder.encode(usuario.getPassword()));
 
-        // 👇 NUEVO: setear valores por defecto al registrar
         usuario.setFechaCreacion(LocalDateTime.now());
         if (usuario.getEstadoDisponibilidad() == null) {
             usuario.setEstadoDisponibilidad("DISPONIBLE");
         }
 
-        return usuarioRepository.save(usuario);
+        Usuario guardado = usuarioRepository.save(usuario);
+
+        // Registro en auditoría del auto-registro de cliente
+        auditService.registrar(
+                guardado.getUsername(),
+                AuditService.CAT_AUTH,
+                "AUTH_REGISTRO",
+                "Auto-registro de cliente nuevo: " + guardado.getNombreCompleto() + " (" + guardado.getEmail() + ")"
+        );
+
+        return guardado;
     }
 
     // Proceso de Login
     public Map<String, String> login(String username, String password) {
         Usuario usuario = usuarioRepository.findByUsername(username)
-                .orElseThrow(() -> new RuntimeException("Usuario no encontrado"));
+                .orElse(null);
 
-        // AQUÍ SE COMPARA CORRECTAMENTE
+        if (usuario == null) {
+            auditService.registrar(
+                    username != null ? username : "ANONIMO",
+                    AuditService.CAT_AUTH,
+                    "AUTH_LOGIN_FALLIDO",
+                    "Intento de login con usuario inexistente: " + username
+            );
+            throw new RuntimeException("Usuario no encontrado");
+        }
+
         if (passwordEncoder.matches(password, usuario.getPassword())) {
 
-            // 👇 NUEVO: actualizar última conexión cada vez que hace login
             usuario.setUltimaConexion(LocalDateTime.now());
             usuarioRepository.save(usuario);
 
@@ -58,8 +78,22 @@ public class AuthService {
             if (usuario.getDepartamentoId() != null) {
                 response.put("departamentoId", usuario.getDepartamentoId());
             }
+
+            auditService.registrar(
+                    usuario.getUsername(),
+                    AuditService.CAT_AUTH,
+                    "AUTH_LOGIN_OK",
+                    "Inicio de sesión exitoso (rol: " + usuario.getRol().name() + ")"
+            );
+
             return response;
         } else {
+            auditService.registrar(
+                    usuario.getUsername(),
+                    AuditService.CAT_AUTH,
+                    "AUTH_LOGIN_FALLIDO",
+                    "Contraseña incorrecta para usuario: " + usuario.getUsername()
+            );
             throw new RuntimeException("Contraseña incorrecta");
         }
     }
