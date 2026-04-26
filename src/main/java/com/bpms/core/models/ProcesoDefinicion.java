@@ -36,6 +36,13 @@ public class ProcesoDefinicion {
     private String motivoObsolescencia; // por qué se marcó como obsoleta
     private Integer numeroVersion = 0; // para ordenar (1, 2, 3, ...)
 
+    // 👇 NUEVO Colaboración: borrador compartido en tiempo real.
+    // Se actualiza por auto-guardado mientras hay sesión colaborativa activa.
+    // Al guardar la política definitivamente, este campo se limpia.
+    private String borradorXml;
+    private LocalDateTime fechaUltimoBorrador;
+    private String borradorPor; // username del último que tocó el borrador
+
     public ProcesoDefinicion() {
     }
 
@@ -183,5 +190,29 @@ public class ProcesoDefinicion {
 
     public void setNumeroVersion(Integer n) {
         this.numeroVersion = n;
+    }
+    // 👇 NUEVO Colaboración: getters/setters del borrador compartido
+    public String getBorradorXml() {
+        return borradorXml;
+    }
+
+    public void setBorradorXml(String borradorXml) {
+        this.borradorXml = borradorXml;
+    }
+
+    public LocalDateTime getFechaUltimoBorrador() {
+        return fechaUltimoBorrador;
+    }
+
+    public void setFechaUltimoBorrador(LocalDateTime f) {
+        this.fechaUltimoBorrador = f;
+    }
+
+    public String getBorradorPor() {
+        return borradorPor;
+    }
+
+    public void setBorradorPor(String borradorPor) {
+        this.borradorPor = borradorPor;
     }
 }

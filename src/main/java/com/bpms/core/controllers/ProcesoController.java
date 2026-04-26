@@ -145,4 +145,53 @@ public class ProcesoController {
     public ResponseEntity<List<ProcesoDefinicion>> obtenerVersiones(@PathVariable String codigoBase) {
         return ResponseEntity.ok(procesoService.obtenerHistorialVersiones(codigoBase));
     }
+
+    /**
+     * 👇 NUEVO Colaboración: devuelve el último borrador colaborativo de un proceso.
+     * Si no hay borrador, devuelve el XML oficial.
+     * Lo usa el frontend al abrir el editor para preguntar "¿recuperar borrador?".
+     */
+    @GetMapping("/{id}/borrador")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> obtenerBorrador(@PathVariable String id) {
+        return procesoService.obtenerPorId(id)
+                .map(p -> {
+                    Map<String, Object> resp = new java.util.HashMap<>();
+                    resp.put("procesoId", p.getId());
+                    resp.put("bpmnXml", p.getBpmnXml());
+                    resp.put("borradorXml", p.getBorradorXml());
+                    resp.put("borradorPor", p.getBorradorPor());
+                    resp.put("fechaUltimoBorrador", p.getFechaUltimoBorrador());
+                    boolean hayBorradorReciente = p.getBorradorXml() != null
+                            && !p.getBorradorXml().isBlank();
+                    resp.put("hayBorradorReciente", hayBorradorReciente);
+                    return ResponseEntity.ok((Object) resp);
+                })
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    /**
+     * 👇 NUEVO Colaboración: limpia el borrador colaborativo (lo invoca el frontend
+     * tras guardar la política definitivamente).
+     */
+    @DeleteMapping("/{id}/borrador")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> limpiarBorrador(@PathVariable String id) {
+        try {
+            // Inyectaremos BorradorService a través del service o aquí mismo
+            // Como ProcesoService no lo tiene, lo hacemos aquí:
+            var opt = procesoService.obtenerPorId(id);
+            if (opt.isEmpty()) return ResponseEntity.notFound().build();
+
+            var proceso = opt.get();
+            proceso.setBorradorXml(null);
+            proceso.setFechaUltimoBorrador(null);
+            proceso.setBorradorPor(null);
+            procesoService.actualizarProceso(id, proceso);
+
+            return ResponseEntity.ok(Map.of("mensaje", "Borrador limpiado"));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
 }

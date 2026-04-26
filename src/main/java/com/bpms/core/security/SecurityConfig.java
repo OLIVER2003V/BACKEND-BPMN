@@ -61,6 +61,7 @@ public class SecurityConfig {
                         // Endpoints existentes que requieren JWT explícito
                         .requestMatchers("/api/ia/**").authenticated()
                         .requestMatchers("/api/reportes/**").authenticated()
+                        .requestMatchers("/api/colaboracion/**").authenticated()
 
                         // 3. Cualquier otro requiere autenticación
                         .anyRequest().authenticated())
