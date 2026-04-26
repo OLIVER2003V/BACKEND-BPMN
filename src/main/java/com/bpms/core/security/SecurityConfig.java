@@ -74,14 +74,15 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(Arrays.asList(
+        
+        // 👇 NUEVO: Cambiado obligatoriamente a setAllowedOriginPatterns
+        configuration.setAllowedOriginPatterns(Arrays.asList(
                 "http://localhost:4200",
                 "http://13.59.124.116:8080",
-                "https://*.cloudfront.net", // 👈 Para cuando deploy en CloudFront
-                "https://d1234abcd.cloudfront.net" // 👈 Tu URL específica (la sabrás después)
+                "http://13.59.124.116",
+                "https://*.cloudfront.net" 
         ));
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
-
         configuration.setAllowedHeaders(List.of("*"));
         configuration.setExposedHeaders(List.of("Authorization", "Content-Disposition"));
         configuration.setAllowCredentials(true);
@@ -91,7 +92,6 @@ public class SecurityConfig {
         source.registerCorsConfiguration("/**", configuration);
         return source;
     }
-
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();

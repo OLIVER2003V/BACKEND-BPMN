@@ -28,10 +28,15 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
-        // 👇 Endpoint principal del handshake. Permitimos el origen del frontend.
+        // 👇 NUEVO: Permitimos orígenes dinámicos para Dev y Prod
         registry.addEndpoint("/ws-colaboracion")
-                .setAllowedOrigins("http://localhost:4200");
-        // Sin SockJS: usamos WebSocket nativo (más limpio y suficiente para Chrome moderno).
+                .setAllowedOriginPatterns(
+                    "http://localhost:4200", 
+                    "http://13.59.124.116", 
+                    "http://13.59.124.116:8080",
+                    "https://*.cloudfront.net"
+                );
+        // Sin SockJS: usamos WebSocket nativo.
     }
 
     @Override
