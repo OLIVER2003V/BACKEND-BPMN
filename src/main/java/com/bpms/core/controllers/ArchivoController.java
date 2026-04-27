@@ -1,103 +1,61 @@
 package com.bpms.core.controllers;
 
-import org.springframework.core.io.Resource;
-import org.springframework.core.io.UrlResource;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.MediaType;
+import com.bpms.core.services.ArchivoService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.net.MalformedURLException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.time.LocalDateTime;
 import java.util.Map;
-import java.util.UUID;
 
+/**
+ * Controller delgado: recibe la petición HTTP y delega TODO al ArchivoService.
+ * 👇 NUEVO: Refactorizado para usar AWS S3 (antes guardaba en filesystem de EC2).
+ *
+ * NOTA: Los endpoints `/ver/...` se eliminaron porque ahora las URLs son directas
+ * a S3 (https://bpms-core-archivos-oliver.s3.us-east-2.amazonaws.com/...).
+ * El frontend ya no necesita pasar por el backend para descargar archivos.
+ */
 @RestController
 @RequestMapping("/api/archivos")
 public class ArchivoController {
 
-    private static final String CARPETA_BASE = "uploads";
+    private final ArchivoService archivoService;
+
+    public ArchivoController(ArchivoService archivoService) {
+        this.archivoService = archivoService;
+    }
 
     @PostMapping("/subir")
-    public ResponseEntity<?> subirArchivo(@RequestParam("archivo") MultipartFile archivo,
-                                           @RequestParam(value = "tramiteId", required = false) String tramiteId) {
-        if (archivo.isEmpty()) {
-            return ResponseEntity.badRequest().body(Map.of("error", "Archivo vacío"));
-        }
-
+    public ResponseEntity<?> subirArchivo(
+            @RequestParam("archivo") MultipartFile archivo,
+            @RequestParam(value = "tramiteId", required = false) String tramiteId) {
         try {
-            // Crear carpeta si no existe
-            Path carpeta = Paths.get(CARPETA_BASE);
-            if (!Files.exists(carpeta)) Files.createDirectories(carpeta);
-
-            // Subcarpeta por trámite (opcional)
-            if (tramiteId != null && !tramiteId.isBlank()) {
-                carpeta = carpeta.resolve(tramiteId);
-                if (!Files.exists(carpeta)) Files.createDirectories(carpeta);
-            }
-
-            // Nombre único (evitar colisiones)
-            String nombreOriginal = archivo.getOriginalFilename();
-            String extension = "";
-            if (nombreOriginal != null && nombreOriginal.contains(".")) {
-                extension = nombreOriginal.substring(nombreOriginal.lastIndexOf("."));
-            }
-            String nombreUnico = UUID.randomUUID() + extension;
-
-            Path destino = carpeta.resolve(nombreUnico);
-            archivo.transferTo(destino);
-
-            // Retornar URL pública para acceder
-            String urlPublica = "/api/archivos/ver/" +
-                    (tramiteId != null ? tramiteId + "/" : "") + nombreUnico;
-
-            return ResponseEntity.ok(Map.of(
-                    "nombreOriginal", nombreOriginal,
-                    "nombreAlmacenado", nombreUnico,
-                    "url", urlPublica,
-                    "tamano", archivo.getSize(),
-                    "fechaSubida", LocalDateTime.now().toString()
-            ));
-
+            Map<String, Object> resp = archivoService.subirArchivo(archivo, tramiteId);
+            return ResponseEntity.ok(resp);
         } catch (IOException e) {
             e.printStackTrace();
-            return ResponseEntity.internalServerError().body(
-                    Map.of("error", "Error al guardar archivo: " + e.getMessage()));
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("error", "Error al subir archivo: " + e.getMessage()));
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("error", "Error inesperado: " + e.getMessage()));
         }
     }
 
-    @GetMapping("/ver/{nombre}")
-    public ResponseEntity<Resource> descargarArchivo(@PathVariable String nombre) {
-        return servirArchivo(Paths.get(CARPETA_BASE, nombre));
-    }
-
-    @GetMapping("/ver/{tramiteId}/{nombre}")
-    public ResponseEntity<Resource> descargarArchivoDeTramite(
-            @PathVariable String tramiteId, @PathVariable String nombre) {
-        return servirArchivo(Paths.get(CARPETA_BASE, tramiteId, nombre));
-    }
-
-    private ResponseEntity<Resource> servirArchivo(Path ruta) {
+    /**
+     * 👇 NUEVO: Endpoint para que el frontend pueda eliminar archivos
+     * cuando el usuario quita un campo de archivo del formulario.
+     */
+    @DeleteMapping("/eliminar")
+    public ResponseEntity<?> eliminarArchivo(@RequestParam("url") String url) {
         try {
-            if (!Files.exists(ruta)) return ResponseEntity.notFound().build();
-
-            Resource resource = new UrlResource(ruta.toUri());
-            String contentType = Files.probeContentType(ruta);
-            if (contentType == null) contentType = "application/octet-stream";
-
-            return ResponseEntity.ok()
-                    .contentType(MediaType.parseMediaType(contentType))
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + ruta.getFileName() + "\"")
-                    .body(resource);
-        } catch (MalformedURLException e) {
-            return ResponseEntity.notFound().build();
-        } catch (IOException e) {
-            return ResponseEntity.internalServerError().build();
+            archivoService.eliminarArchivo(url);
+            return ResponseEntity.ok(Map.of("mensaje", "Archivo eliminado"));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("error", e.getMessage()));
         }
     }
 }

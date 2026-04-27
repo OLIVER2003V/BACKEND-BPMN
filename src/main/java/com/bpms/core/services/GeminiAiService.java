@@ -160,32 +160,79 @@ public class GeminiAiService {
     }
 
     // 👇 NUEVO: Función para leer el archivo del disco y pasarlo al formato Gemini
-    private Map<String, Object> procesarArchivoParaGemini(String urlRelativa) {
+    /**
+     * 👇 NUEVO S3: Lee un archivo (desde URL de S3 o desde filesystem legacy)
+     * y lo convierte a formato inlineData para mandárselo a Gemini.
+     *
+     * Soporta DOS modalidades:
+     *  - URLs absolutas de S3: https://bpms-core-archivos-oliver.s3.us-east-2.amazonaws.com/...
+     *  - URLs relativas legacy: /api/archivos/ver/uuid.pdf (filesystem viejo)
+     */
+    private Map<String, Object> procesarArchivoParaGemini(String url) {
+        if (url == null || url.isBlank()) return null;
+
         try {
-            // Ejemplo urlRelativa: "/api/archivos/ver/69de3.../uuid.pdf"
-            // Extraemos solo "69de3.../uuid.pdf" o "uuid.pdf"
-            String rutaLogica = urlRelativa.replace("/api/archivos/ver/", "");
-            Path filePath = Paths.get(CARPETA_BASE, rutaLogica);
+            byte[] fileBytes;
+            String mimeType;
 
-            if (Files.exists(filePath)) {
-                String mimeType = Files.probeContentType(filePath);
-                // Gemini soporta PDFs, PNGs, JPGs, WebP, etc.
-                if (mimeType == null)
-                    mimeType = "application/octet-stream";
+            if (url.startsWith("http://") || url.startsWith("https://")) {
+                // 👇 NUEVO: descargar desde URL pública (S3, CloudFront, etc.)
+                java.net.URL urlObj = java.net.URI.create(url).toURL();
+                java.net.HttpURLConnection conn = (java.net.HttpURLConnection) urlObj.openConnection();
+                conn.setRequestMethod("GET");
+                conn.setConnectTimeout(15000);
+                conn.setReadTimeout(30000);
 
-                byte[] fileBytes = Files.readAllBytes(filePath);
-                String base64Data = Base64.getEncoder().encodeToString(fileBytes);
+                if (conn.getResponseCode() != 200) {
+                    System.err.println("[Gemini] No se pudo descargar archivo S3 (" + conn.getResponseCode() + "): " + url);
+                    return null;
+                }
 
-                Map<String, String> inlineData = new HashMap<>();
-                inlineData.put("mimeType", mimeType);
-                inlineData.put("data", base64Data);
+                mimeType = conn.getContentType();
+                if (mimeType == null) mimeType = inferirMimeDesdeUrl(url);
 
-                return Map.of("inlineData", inlineData);
+                try (java.io.InputStream is = conn.getInputStream();
+                     java.io.ByteArrayOutputStream bos = new java.io.ByteArrayOutputStream()) {
+                    byte[] buffer = new byte[8192];
+                    int n;
+                    while ((n = is.read(buffer)) != -1) bos.write(buffer, 0, n);
+                    fileBytes = bos.toByteArray();
+                }
+            } else {
+                // 👇 LEGACY: archivo en filesystem (compatibilidad con archivos viejos)
+                String rutaLogica = url.replace("/api/archivos/ver/", "");
+                Path filePath = Paths.get(CARPETA_BASE, rutaLogica);
+                if (!Files.exists(filePath)) {
+                    System.err.println("[Gemini] Archivo legacy no encontrado: " + filePath);
+                    return null;
+                }
+                mimeType = Files.probeContentType(filePath);
+                if (mimeType == null) mimeType = inferirMimeDesdeUrl(url);
+                fileBytes = Files.readAllBytes(filePath);
             }
-        } catch (IOException e) {
-            System.err.println("No se pudo leer el archivo para la IA: " + e.getMessage());
+
+            String base64Data = Base64.getEncoder().encodeToString(fileBytes);
+            Map<String, String> inlineData = new HashMap<>();
+            inlineData.put("mimeType", mimeType);
+            inlineData.put("data", base64Data);
+
+            return Map.of("inlineData", inlineData);
+
+        } catch (Exception e) {
+            System.err.println("[Gemini] No se pudo procesar archivo para IA: " + url + " — " + e.getMessage());
+            return null;
         }
-        return null; // Si falla, simplemente no lo incluimos
+    }
+
+    /** 👇 NUEVO: infiere el mime type a partir de la extensión del archivo si no viene del header HTTP. */
+    private String inferirMimeDesdeUrl(String url) {
+        String lower = url.toLowerCase();
+        if (lower.endsWith(".pdf")) return "application/pdf";
+        if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+        if (lower.endsWith(".png")) return "image/png";
+        if (lower.endsWith(".webp")) return "image/webp";
+        if (lower.endsWith(".gif")) return "image/gif";
+        return "application/octet-stream";
     }
 
     private String ofuscarDatosSensibles(String texto) {

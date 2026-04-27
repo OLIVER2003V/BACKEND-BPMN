@@ -2,6 +2,7 @@ package com.bpms.core.controllers;
 
 import com.bpms.core.dto.colaboracion.EstadoSesion;
 import com.bpms.core.dto.colaboracion.EventoCursor;
+import com.bpms.core.dto.colaboracion.EventoMetadatos;
 import com.bpms.core.dto.colaboracion.EventoXml;
 import com.bpms.core.dto.colaboracion.PresenciaUsuario;
 import com.bpms.core.services.AuditService;
@@ -169,6 +170,25 @@ public class ColaboracionController {
 
         messagingTemplate.convertAndSend(
                 "/topic/sesion/" + procesoId + "/cursor",
+                evento
+        );
+    }
+
+    /**
+     * Sincronización en tiempo real de los formularios dinámicos y metadata.
+     */
+    @MessageMapping("/sesion/{procesoId}/cambio-metadatos")
+    public void cambioMetadatos(
+            @DestinationVariable String procesoId,
+            @Payload EventoMetadatos evento,
+            Principal principal) {
+
+        if (principal == null) return;
+        evento.setEmisor(principal.getName());
+        evento.setTimestamp(System.currentTimeMillis());
+
+        messagingTemplate.convertAndSend(
+                "/topic/sesion/" + procesoId + "/cambio-metadatos",
                 evento
         );
     }

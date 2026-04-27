@@ -112,6 +112,13 @@
     <groupId>org.springframework.boot</groupId>
     <artifactId>spring-boot-starter-websocket</artifactId>
 </dependency>
+
+<!-- 👇 NUEVO: AWS SDK v2 para subir archivos a S3 -->
+<dependency>
+    <groupId>software.amazon.awssdk</groupId>
+    <artifactId>s3</artifactId>
+    <version>2.25.32</version>
+</dependency>
 	</dependencies>
 
 	<build>
