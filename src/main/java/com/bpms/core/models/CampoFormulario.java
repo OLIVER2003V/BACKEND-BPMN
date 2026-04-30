@@ -46,6 +46,10 @@ public class CampoFormulario {
     private Integer filasMinimas;
     private Integer filasMaximas;
 
+    // === Grid de layout (sistema de 12 columnas) ===
+    private Integer columnaSpan;    // 1–12: cuántas columnas CSS ocupa este campo
+    private boolean columnaSalto;   // true = fuerza inicio en nueva fila del grid
+
     // === Decorativos ===
     private String contenidoTexto;
 
@@ -126,4 +130,10 @@ public class CampoFormulario {
 
     public String getContenidoTexto() { return contenidoTexto; }
     public void setContenidoTexto(String contenidoTexto) { this.contenidoTexto = contenidoTexto; }
+
+    public Integer getColumnaSpan() { return columnaSpan; }
+    public void setColumnaSpan(Integer columnaSpan) { this.columnaSpan = columnaSpan; }
+
+    public boolean isColumnaSalto() { return columnaSalto; }
+    public void setColumnaSalto(boolean columnaSalto) { this.columnaSalto = columnaSalto; }
 }
